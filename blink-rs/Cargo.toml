@@ -1,0 +1,20 @@
+[package]
+name = "blink"
+version = "0.19.0"
+edition = "2021"
+description = "An IDL compiler for ROBLOX buffer networking"
+license = "MIT"
+repository = "https://github.com/1axen/blink"
+
+[[bin]]
+name = "blink"
+path = "src/main.rs"
+
+[dependencies]
+regex = "1"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

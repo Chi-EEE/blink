@@ -1,51 +1,133 @@
 name: Release
 
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 env:
   GH_TOKEN: ${{github.token}}
+  CARGO_TERM_COLOR: always
 
 jobs:
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ github.ref_name }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            --draft=false
+
   build:
+    name: Build (${{ matrix.target }})
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: blink-linux-x86_64.tar.xz
+            compress: xz
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            archive: blink-linux-aarch64.tar.xz
+            compress: xz
+            use_cross: true
+
+          - target: x86_64-apple-darwin
+            os: macos-13
+            archive: blink-macos-x86_64.tar.xz
+            compress: xz
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            archive: blink-macos-aarch64.tar.xz
+            compress: xz
+
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            archive: blink-windows-x86_64.tar.gz
+            compress: gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross (Linux aarch64)
+        if: matrix.use_cross
+        run: cargo install cross --locked
+
+      - name: Build with cargo
+        if: "!matrix.use_cross"
+        working-directory: blink-rs
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build with cross
+        if: matrix.use_cross
+        working-directory: blink-rs
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package (Unix, xz)
+        if: matrix.compress == 'xz' && runner.os != 'Windows'
+        run: |
+          mkdir -p dist
+          cp blink-rs/target/${{ matrix.target }}/release/blink dist/blink
+          tar -cJvf dist/${{ matrix.archive }} -C dist blink
+
+      - name: Package (Windows, gz)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist
+          Copy-Item "blink-rs\target\${{ matrix.target }}\release\blink.exe" "dist\blink.exe"
+          tar -czvf "dist\${{ matrix.archive }}" -C dist blink.exe
+
+      - name: Upload binary to release
+        run: gh release upload ${{ github.ref_name }} dist/${{ matrix.archive }}
+
+  plugin:
+    name: Upload Plugin
+    needs: create-release
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
-      - name: Setup rokit
-        uses: CompeyDev/setup-rokit@v0.1.0
+
+      - name: Upload plugin to release
+        run: gh release upload ${{ github.ref_name }} release/blink-plugin.rbxm
+
+  pesde:
+    name: Publish pesde package
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup pesde
         uses: axiom-co/setup-pesde@v0.4.1
         with:
           token: ${{ secrets.PESDE_TOKEN }}
 
-      - name: Build binaries
-        run: lune run build
-
-      - name: linux-aarch64
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-linux-aarch64.tar.xz
-
-      - name: linux-x86_64
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-linux-x86_64.tar.xz
-
-      - name: macos-aarch64
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-macos-aarch64.tar.xz
-
-      - name: macos-x86_64
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-macos-x86_64.tar.xz
-
-      - name: windows-x86_64
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-windows-x86_64.tar.gz
-
-      - name: plugin
-        run: gh release upload ${{github.event.release.tag_name}} release/blink-plugin.rbxm
-      
-      - name: pesde
+      - name: Publish
         run: pesde publish -y
+

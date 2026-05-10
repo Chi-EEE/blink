@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "blink-rs/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "blink-rs/**"
+      - ".github/workflows/ci.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            blink-rs/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('blink-rs/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Run tests
+        working-directory: blink-rs
+        run: cargo test --verbose
+
+      - name: Check formatting
+        working-directory: blink-rs
+        run: cargo fmt --check
+
+      - name: Clippy
+        working-directory: blink-rs
+        run: cargo clippy -- -D warnings
